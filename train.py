@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 # --- CONSTANTS ---
 BATCH_SIZE = 16
-EPOCHS = 50
+EPOCHS = 1
 LEARNING_RATE = 1e-3
 MODEL_SAVE_PATH = 'ocr_model.h5'
 VOCAB_SAVE_PATH = 'vocabulary.json'
