@@ -10,5 +10,7 @@ matplotlib
 pandas
 tqdm
 Flask
-numpy==1.26.4
-unicorn
+numpy
+gunicorn
+requests
+Pillow

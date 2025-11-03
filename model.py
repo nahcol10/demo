@@ -325,11 +325,35 @@ def _download_craft_weights():
     os.makedirs(CRAFT_WEIGHTS_DIR, exist_ok=True)
     log.info("Downloading CRAFT weights (craft_mlt_25k.pth)...")
     try:
-        gdown.download(id='1Rin_20-y_iK0n2jD3j0-aOavK2imcbP-', output=CRAFT_WEIGHTS_FILE, quiet=False)
-        if not os.path.exists(CRAFT_WEIGHTS_FILE):
-            log.error("Failed to download CRAFT weights")
-            raise FileNotFoundError("CRAFT weights download failed")
-        log.info("CRAFT weights downloaded successfully")
+        # Use the correct Google Drive file ID for the General CRAFT model
+        # From official repo: https://github.com/clovaai/CRAFT-pytorch
+        file_id = '1Jk4eGD7crsqCCg9C9VjCLkMN3ze8kutZ'
+        
+        # Try gdown with the correct file ID
+        try:
+            url = f"https://drive.google.com/uc?id={file_id}"
+            gdown.download(url, CRAFT_WEIGHTS_FILE, quiet=False, fuzzy=True)
+        except Exception as gdown_error:
+            log.warning(f"gdown method failed: {gdown_error}")
+            # Fallback to direct download method
+            try:
+                log.info("Trying gdown.download with direct ID...")
+                gdown.download(id=file_id, output=CRAFT_WEIGHTS_FILE, quiet=False)
+            except Exception as e2:
+                log.error(f"All download methods failed: {e2}")
+                raise Exception(
+                    f"Failed to download CRAFT weights. Please manually download "
+                    f"the General model from https://drive.google.com/file/d/{file_id}/view "
+                    f"and place it at {CRAFT_WEIGHTS_FILE}"
+                )
+        
+        if not os.path.exists(CRAFT_WEIGHTS_FILE) or os.path.getsize(CRAFT_WEIGHTS_FILE) < 1000000:  # Should be > 1MB
+            raise FileNotFoundError(
+                f"CRAFT weights download incomplete or failed. Please manually download "
+                f"from https://drive.google.com/file/d/{file_id}/view "
+                f"and place it at {CRAFT_WEIGHTS_FILE}"
+            )
+        log.info(f"CRAFT weights downloaded successfully ({os.path.getsize(CRAFT_WEIGHTS_FILE)} bytes)")
     except Exception as e:
         log.error(f"Error downloading CRAFT weights: {e}")
         raise
@@ -359,30 +383,32 @@ def setup_craft_model():
 def run_craft_detection(image_folder: str, result_folder: str) -> bool:
     """Runs the CRAFT test.py script on a folder of images."""
     try:
+        log.info("Setting up CRAFT model...")
         setup_craft_model()  # Ensure CRAFT is ready
         
         os.makedirs(result_folder, exist_ok=True)
         
         # Determine CUDA availability
         has_cuda = tf.config.list_physical_devices('GPU')
-        cuda_flag = 'cuda' if has_cuda else 'cpu'
+        cuda_flag = 'True' if has_cuda else 'False'
         log.info(f"CUDA available: {has_cuda}")
         
-        # Updated command for official CRAFT repository
+        # CRAFT test.py uses a hardcoded result folder './result/', so we need to run it
+        # from a specific directory and then move the results
+        # Updated command for official CRAFT repository (without unsupported arguments)
         craft_command = [
             sys.executable,
             CRAFT_TEST_SCRIPT,
             '--trained_model', os.path.abspath(CRAFT_WEIGHTS_FILE),
             '--test_folder', os.path.abspath(image_folder),
-            '--result_folder', os.path.abspath(result_folder),
             '--cuda', cuda_flag,
-            '--poly',
-            '--show_result'
+            '--poly'
         ]
         
         log.info(f"Running CRAFT text detection on {image_folder}...")
         log.info(f"Command: {' '.join(craft_command)}")
         
+        # Run CRAFT from its directory
         craft_cwd = CRAFT_DIR
         result = subprocess.run(
             craft_command, 
@@ -399,6 +425,15 @@ def run_craft_detection(image_folder: str, result_folder: str) -> bool:
             log.warning("CRAFT stderr:")
             log.warning(result.stderr)
             
+        # Move results from CRAFT's default ./result/ to our result_folder
+        craft_result_dir = os.path.join(CRAFT_DIR, 'result')
+        if os.path.exists(craft_result_dir):
+            # Move all result files to our desired location
+            for file in glob.glob(os.path.join(craft_result_dir, '*')):
+                dest_file = os.path.join(result_folder, os.path.basename(file))
+                shutil.move(file, dest_file)
+                log.debug(f"Moved {file} to {dest_file}")
+        
         log.info(f"CRAFT processing complete. Results in {result_folder}")
         
         # Verify that result files were created
@@ -414,8 +449,17 @@ def run_craft_detection(image_folder: str, result_folder: str) -> bool:
         log.error(f"CRAFT stdout: {e.stdout}")
         log.error(f"CRAFT stderr: {e.stderr}")
         return False
+    except subprocess.TimeoutExpired as e:
+        log.error(f"CRAFT detection timed out after {e.timeout} seconds")
+        return False
+    except FileNotFoundError as e:
+        log.error(f"CRAFT files not found: {e}")
+        log.error(f"CRAFT_DIR: {CRAFT_DIR}")
+        log.error(f"CRAFT_TEST_SCRIPT: {CRAFT_TEST_SCRIPT}")
+        log.error(f"CRAFT_WEIGHTS_FILE: {CRAFT_WEIGHTS_FILE}")
+        return False
     except Exception as e:
-        log.error(f"Unexpected error running CRAFT: {e}")
+        log.error(f"Unexpected error running CRAFT: {e}", exc_info=True)
         return False
 
 def pdf_to_images(pdf_path: str, output_folder: str) -> None:
