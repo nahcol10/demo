@@ -59,3 +59,6 @@ temp/
 tmp/
 *.tmp
 CRAFT-pytorch/
+.vscode-server/
+.windsurf-server/
+.cursor-server/
