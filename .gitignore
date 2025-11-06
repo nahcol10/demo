@@ -62,3 +62,4 @@ CRAFT-pytorch/
 .vscode-server/
 .windsurf-server/
 .cursor-server/
+.venv/

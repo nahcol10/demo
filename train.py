@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 # --- CONSTANTS ---
 BATCH_SIZE = 16
-EPOCHS = 1
+EPOCHS = 80 # Set to a reasonable number
 LEARNING_RATE = 1e-3
 MODEL_SAVE_PATH = 'ocr_model.h5'
 VOCAB_SAVE_PATH = 'vocabulary.json'
@@ -57,14 +57,18 @@ def download_training_data() -> None:
             
             # Handle different possible folder structures
             possible_folders = ['labeled_data', 'training_data', 'data']
+            extracted_folder_found = False
             for folder in possible_folders:
-                if os.path.exists(folder):
-                    if os.path.exists(TRAINING_DATA_DIR):
+                if os.path.exists(folder) and os.path.isdir(folder):
+                    if os.path.exists(TRAINING_DATA_DIR) and folder != TRAINING_DATA_DIR:
+                        log.warning(f"Removing existing directory: {TRAINING_DATA_DIR}")
                         shutil.rmtree(TRAINING_DATA_DIR)
-                    shutil.move(folder, TRAINING_DATA_DIR)
+                    if folder != TRAINING_DATA_DIR:
+                        shutil.move(folder, TRAINING_DATA_DIR)
+                    extracted_folder_found = True
                     break
             
-            if not os.path.exists(TRAINING_DATA_DIR):
+            if not extracted_folder_found:
                 log.error("Could not find training data folder after extraction")
                 raise FileNotFoundError("Training data folder not found")
             
@@ -184,7 +188,7 @@ def prepare_vocabulary(df: pd.DataFrame) -> Tuple[layers.StringLookup, layers.St
     return char_to_num, num_to_char, n_classes, max_label_length
 
 def create_datasets(train_df: pd.DataFrame, valid_df: pd.DataFrame, 
-                   char_to_num: layers.StringLookup, max_label_length: int) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
+                      char_to_num: layers.StringLookup, max_label_length: int) -> Tuple[tf.data.Dataset, tf.data.Dataset]:
     """
     Creates TensorFlow datasets for training and validation.
     
@@ -268,7 +272,7 @@ def create_datasets(train_df: pd.DataFrame, valid_df: pd.DataFrame,
     return train_ds, valid_ds
 
 def build_and_train_model(train_ds: tf.data.Dataset, valid_ds: tf.data.Dataset, 
-                         n_classes: int, char_to_num: layers.StringLookup) -> Tuple[keras.Model, Dict[str, Any]]:
+                            n_classes: int, char_to_num: layers.StringLookup) -> Tuple[keras.Model, keras.Model, Dict[str, Any]]:
     """
     Builds, compiles, and trains the OCR model.
     
@@ -279,7 +283,7 @@ def build_and_train_model(train_ds: tf.data.Dataset, valid_ds: tf.data.Dataset,
         char_to_num: Character to number lookup layer
     
     Returns:
-        Tuple of (trained_model, training_history)
+        Tuple of (trained_model, inference_model, training_history)
     """
     log.info("Building model...")
     
@@ -287,7 +291,8 @@ def build_and_train_model(train_ds: tf.data.Dataset, valid_ds: tf.data.Dataset,
     vocab_size = len(char_to_num.get_vocabulary())
     log.info(f"Vocabulary size: {vocab_size}")
     
-    model = ocr_model.build_ocr_model(n_classes, vocab_size)
+    # === GET BOTH MODELS ===
+    model, inference_model = ocr_model.build_ocr_model(vocab_size)
     model.summary()
     
     # Compile model
@@ -336,14 +341,20 @@ def build_and_train_model(train_ds: tf.data.Dataset, valid_ds: tf.data.Dataset,
         verbose=1
     )
     
-    return model, history
+    # === APPLY BEST WEIGHTS TO INFERENCE MODEL ===
+    # The EarlyStopping callback with restore_best_weights=True
+    # ensures 'model' has the best weights
+    log.info("Applying best weights to inference model...")
+    inference_model.set_weights(model.get_weights())
+    
+    return model, inference_model, history
 
-def plot_training_history(history: Dict[str, Any]) -> None:
+def plot_training_history(history_dict: Dict[str, Any]) -> None:
     """
     Plots and saves training history.
     
     Args:
-        history: Training history dictionary
+        history_dict: Training history dictionary (history.history)
     """
     log.info("Plotting training history...")
     
@@ -351,8 +362,8 @@ def plot_training_history(history: Dict[str, Any]) -> None:
     
     # Plot training & validation loss
     plt.figure(figsize=(10, 6))
-    plt.plot(history.history['loss'], label='Training Loss')
-    plt.plot(history.history['val_loss'], label='Validation Loss')
+    plt.plot(history_dict['loss'], label='Training Loss')
+    plt.plot(history_dict['val_loss'], label='Validation Loss')
     plt.title('Model Training History')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
@@ -365,13 +376,13 @@ def plot_training_history(history: Dict[str, Any]) -> None:
     
     log.info(f"Training history plot saved to {plot_path}")
 
-def evaluate_model(model: keras.Model, valid_df: pd.DataFrame, 
-                  num_to_char: layers.StringLookup) -> None:
+def evaluate_model(inference_model: keras.Model, valid_df: pd.DataFrame, 
+                   num_to_char: layers.StringLookup) -> None:
     """
     Evaluates the trained model on validation data.
     
     Args:
-        model: Trained Keras model
+        inference_model: Trained Keras INFERENCE model
         valid_df: Validation DataFrame
         num_to_char: Number to character lookup layer
     """
@@ -394,7 +405,7 @@ def evaluate_model(model: keras.Model, valid_df: pd.DataFrame,
             img = tf.expand_dims(img, 0)  # Add batch dimension
             
             # Get prediction
-            pred = model.predict(img, verbose=0)
+            pred = inference_model.predict(img, verbose=0)
             decoded = ocr_model.decode_pred(pred, num_to_char)
             
             predictions.append(decoded[0])
@@ -444,17 +455,17 @@ def main():
         train_ds, valid_ds = create_datasets(train_df, valid_df, char_to_num, max_label_length)
         
         # --- 6. Build, Compile, and Train Model ---
-        model, history = build_and_train_model(train_ds, valid_ds, n_classes, char_to_num)
+        model, inference_model, history = build_and_train_model(train_ds, valid_ds, n_classes, char_to_num)
         
         # --- 7. Evaluate Model ---
-        evaluate_model(model, valid_df, num_to_char)
+        evaluate_model(inference_model, valid_df, num_to_char)
         
         # --- 8. Save Final Model ---
-        log.info(f"Saving final trained model to {MODEL_SAVE_PATH}...")
-        model.save(MODEL_SAVE_PATH)
+        log.info(f"Saving final INFERENCE model to {MODEL_SAVE_PATH}...")
+        inference_model.save(MODEL_SAVE_PATH)
         
         # --- 9. Plot Training History ---
-        plot_training_history(history)
+        plot_training_history(history.history)
         
         # --- 10. Save Final Results ---
         final_results = {
