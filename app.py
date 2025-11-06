@@ -31,10 +31,7 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 
 # --- Constants ---
-# === THIS IS THE FIX ===
-# Changed from (32, 128) to (50, 200) to match model.py
 IMAGE_SIZE = (50, 200)  # (Height, Width) - MUST MATCH TRAINING
-# === END FIX ===
 CHANNELS = 1  # Grayscale
 
 # --- Model Globals ---
@@ -76,7 +73,6 @@ def load_and_preprocess_image(image, image_size=IMAGE_SIZE, channels=CHANNELS):
     target_img = target_img / 255.0
     
     # Transpose for CTC (Width, Height)
-    # This will result in shape (200, 50, 1), which matches the model
     target_img = tf.transpose(target_img, perm=[1, 0, 2])
     return target_img
 
@@ -102,7 +98,7 @@ def load_inference_model(model_path, vocab_path):
     
     log.info(f"Loading vocabulary from {vocab_path}...")
     try:
-        with open(vocab_path, 'r') as f:
+        with open(vocab_path, 'r', encoding='utf-8') as f:
             MODEL_METADATA = json.load(f)
         
         vocabulary = MODEL_METADATA['vocabulary']
@@ -201,7 +197,7 @@ def predict():
                     return jsonify({'error': 'Text was detected but could not be processed.'}), 400
 
                 batch = tf.stack(processed_images, axis=0)
-                log.info(f"Processed batch for model with shape: {batch.shape}") # Will now be (1, 200, 50, 1)
+                log.info(f"Processed batch for model with shape: {batch.shape}")
 
                 # --- 4. Predict ---
                 if INFERENCE_MODEL is None:
@@ -221,13 +217,28 @@ def predict():
                 
                 full_text = " ".join(decoded_texts)
                 
-                return jsonify({
+                # === THIS IS THE FIX ===
+                # Create the response dictionary
+                response_data = {
                     'id': str(uuid.uuid4()),
                     'filename': file.filename,
                     'word_count': len(decoded_texts),
                     'full_text': full_text,
                     'words': decoded_texts
-                })
+                }
+                
+                # Manually dump the json with ensure_ascii=False
+                # This guarantees UTF-8 characters are not escaped
+                response_json = json.dumps(response_data, ensure_ascii=False)
+                
+                # Create a Flask Response object
+                response = app.response_class(
+                    response_json,
+                    mimetype='application/json; charset=utf-8'
+                )
+                
+                return response
+                # === END FIX ===
 
         except Exception as e:
             log.error(f"Error during prediction: {e}", exc_info=True)

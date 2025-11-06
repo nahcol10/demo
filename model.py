@@ -96,18 +96,22 @@ def create_csv_from_folder(folder_path, csv_path):
         writer.writerow(['FILENAME', 'IDENTITY'])
         
         for filename in image_files:
-            # Label is the filename before any underscores (from augmentation)
-            label = filename.split('_')[0]
+            # === THIS IS THE FIX ===
+            # Get the filename without any extension (e.g., "word_rot-5" or "word")
+            base_name = os.path.splitext(filename)[0]
+            # The label is the part before the first underscore (e.g., "word")
+            label = base_name.split('_')[0]
+            # === END FIX ===
             writer.writerow([filename, label])
 
 def save_vocabulary(filepath, vocab, max_length):
     """Saves the vocabulary and max length to a JSON file."""
     log.info(f"Saving vocabulary to {filepath}...")
-    with open(filepath, 'w') as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         json.dump({
             'vocabulary': vocab,
             'max_label_length': max_length
-        }, f, indent=2)
+        }, f, indent=2, ensure_ascii=False)
 
 # ===================================================================
 # TENSORFLOW & MODEL FUNCTIONS (from your Model.ipynb)

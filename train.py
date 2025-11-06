@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 # --- CONSTANTS ---
 BATCH_SIZE = 16
-EPOCHS = 80 # Set to a reasonable number
+EPOCHS = 100  # <-- INCREASED FOR A USABLE MODEL
 LEARNING_RATE = 1e-3
 MODEL_SAVE_PATH = 'ocr_model.h5'
 VOCAB_SAVE_PATH = 'vocabulary.json'
@@ -478,8 +478,8 @@ def main():
         }
         
         results_path = os.path.join(PLOTS_DIR, 'training_results.json')
-        with open(results_path, 'w') as f:
-            json.dump(final_results, f, indent=2)
+        with open(results_path, 'w', encoding='utf-8') as f:
+            json.dump(final_results, f, indent=2, ensure_ascii=False)
         
         log.info(f"Training results saved to {results_path}")
         log.info(f"Final Results: {final_results}")
